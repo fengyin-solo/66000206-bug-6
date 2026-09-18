@@ -26,3 +26,5 @@ export interface Alarm {
   timestamp: number
   acknowledged: boolean
 }
+
+export type AlarmLevel = Alarm['level']

@@ -43,14 +43,16 @@
     <div class="flex-1 flex flex-col gap-3 p-4 overflow-y-auto">
       <!-- Register Gauges -->
       <div class="grid grid-cols-4 gap-3">
-        <div v-for="d in store.devices" :key="d.id" v-for="r in d.registers" :k="r.address"
-          class="bg-gray-900 rounded-xl p-3">
-          <div class="text-xs text-gray-400">{{ d.name }}</div>
-          <div class="text-2xl font-bold" :class="d.online ? 'text-orange-400' : 'text-gray-600'">
-            {{ typeof r.value === 'number' ? r.value.toFixed(r.value > 100 ? 0 : 1) : r.value ? 'ON' : 'OFF' }}
+        <template v-for="d in store.devices" :key="d.id">
+          <div v-for="r in d.registers" :key="`${d.id}_${r.address}`"
+            class="bg-gray-900 rounded-xl p-3">
+            <div class="text-xs text-gray-400">{{ d.name }}</div>
+            <div class="text-2xl font-bold" :class="d.online ? 'text-orange-400' : 'text-gray-600'">
+              {{ typeof r.value === 'number' ? r.value.toFixed(r.value > 100 ? 0 : 1) : r.value ? 'ON' : 'OFF' }}
+            </div>
+            <div class="text-xs text-gray-500">{{ r.name }} {{ r.unit }}</div>
           </div>
-          <div class="text-xs text-gray-500">{{ r.name }} {{ r.unit }}</div>
-        </div>
+        </template>
       </div>
 
       <!-- Chart -->
@@ -63,14 +65,25 @@
 
       <!-- Alarm List -->
       <div class="bg-gray-900 rounded-xl p-3 max-h-48 overflow-y-auto">
-        <h3 class="text-sm text-gray-400 mb-2">告警记录</h3>
-        <div v-for="a in store.alarms.slice(0, 10)" :key="a.id"
+        <div class="flex justify-between items-center mb-2">
+          <h3 class="text-sm text-gray-400">
+            告警记录
+            <span class="text-xs text-gray-500">
+              （共 {{ store.alarms.length }} 条{{ store.alarms.length >= store.ALARM_LIMIT ? `，已达上限 ${store.ALARM_LIMIT} 条` : '' }}）
+            </span>
+          </h3>
+          <span v-if="store.archivedCount" class="text-xs text-gray-600">
+            最早的非严重/已确认记录已自动归档 {{ store.archivedCount }} 条；未确认的严重告警不会被清理
+          </span>
+        </div>
+        <div v-if="!store.alarms.length" class="text-xs text-gray-600 py-2 text-center">暂无越限记录</div>
+        <div v-for="a in store.alarms" :key="a.id"
           class="flex justify-between text-xs bg-gray-800 rounded p-2 mb-1"
           :class="{ 'border-l-4 border-red-500': a.level === 'critical', 'border-l-4 border-yellow-500': a.level === 'warning' }">
           <span>{{ a.message }}</span>
           <div class="flex gap-2">
             <span class="text-gray-500">{{ new Date(a.timestamp).toLocaleTimeString() }}</span>
-            <button v-if="!a.acknowledged" @click="store.acknowledgeAlarm(a.id)" class="text-blue-400 hover:underline">确认</button>
+            <button @click="store.acknowledgeAlarm(a.id)" class="text-blue-400 hover:underline">确认</button>
           </div>
         </div>
       </div>
@@ -79,23 +92,39 @@
 </template>
 
 <script setup lang="ts">
-import { onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, watch } from 'vue'
 import { useModbusStore } from './store/modbus'
 import TrendChart from './components/TrendChart.vue'
 
 const store = useModbusStore()
 let timer: number | null = null
 
-function startPoll() {
-  store.isPolling = true
-  timer = window.setInterval(() => store.simulatePoll(), store.pollInterval)
-}
-
-function stopPoll() {
-  store.isPolling = false
+function clearTimer() {
   if (timer) { clearInterval(timer); timer = null }
 }
 
-onMounted(() => store.initMockDevices())
-onUnmounted(() => stopPoll())
+function startPoll() {
+  clearTimer()
+  store.isPolling = true
+  timer = window.setInterval(() => store.simulatePoll(), store.pollInterval)
+  store.persist()
+}
+
+function stopPoll() {
+  clearTimer()
+  store.isPolling = false
+  store.persist()
+}
+
+// 采集中拖动间隔滑块时，按新间隔重启定时器
+watch(() => store.pollInterval, () => {
+  if (store.isPolling) startPoll()
+})
+
+onMounted(() => {
+  store.initMockDevices()
+  // 刷新恢复：刷新前正在采集则继续采集，列表/数值/曲线均来自同一份持久化状态
+  if (store.isPolling) startPoll()
+})
+onUnmounted(stopPoll)
 </script>
